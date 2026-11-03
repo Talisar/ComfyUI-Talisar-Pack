@@ -11,6 +11,7 @@ A small collection of ComfyUI custom nodes:
 | [Load Image by Index](#load-text--image-by-index-one-per-run) | `image` | Loads one image (plus its `.txt` caption) from a folder per run, for upscale / img2img passes. |
 | [Load Image (with Parameters)](#upscale-only-runs-keep-the-original-metadata) | `image` | Core Load Image (drag & drop) plus a `parameters` output with the image's A1111 generation data. |
 | [Image Filename (from loader)](#image-filename-from-loader) | `image` | Outputs the source filename of an image from any load-image node, e.g. for the save node's `filename_prefix`. |
+| [Prompt Receiver](#prompt-receiver) | `text` | Shows prompts sent from Local AI Prompt Generator's **Send to ComfyUI** button, ready to edit and queue. |
 
 More nodes will be added over time. No extra Python packages are needed.
 
@@ -238,6 +239,27 @@ Gets the filename of a loaded image without swapping your loader. An IMAGE wire 
 - `image` passes the image through unchanged, so the node can sit inline or off to the side.
 - Works with core Load Image, Load Image (with Parameters), Load Image by Index, and other loaders whose widget holds an image file name or path (`.png`, `.jpg`, `.webp`, ...).
 - `fallback` is used (and a `[Image Filename]` warning logged) when nothing upstream names an image file, e.g. a generated image, or a list loader that only has a folder widget.
+
+## Prompt Receiver
+
+Receives prompts pushed from another app, such as [Local AI Prompt Generator](https://github.com/Talisar/Local-AI-Prompt-Generator)'s **Send to ComfyUI** button. The text appears in the node's box straight away, in every open ComfyUI tab. Read or edit it there, then queue. If the app's "also queue" option is on, the workflow is queued for you (from one tab only: the one you used most recently).
+
+```
+Prompt Receiver ──text──▶ CLIP Text Encode ──▶ ... ──▶ Save Image (Civitai Metadata)
+```
+
+| Input | Description |
+| --- | --- |
+| `channel` | Which sends this node listens to (default `main`, not case-sensitive). Every Prompt Receiver on the channel gets the text, so use different channels, e.g. `main` and `face_detail`, to aim at one node. Must match the channel in the app's Settings. |
+| `text` | The received prompt. Editable, and saved with the workflow. |
+
+Under the box, a status line shows when the last prompt arrived and from which app, and the node flashes green. **Pull last** loads the last prompt sent to the channel since ComfyUI started, e.g. one sent while no tab was open.
+
+Output: `text`.
+
+Only workflows open in a browser tab can be updated. The app is told how many nodes got the prompt, so it can warn you when no open workflow has a receiver on that channel.
+
+For other apps, the API is `POST /prompt_receiver/send` with `{"channel": "main", "text": "...", "queue": false, "source": "My App"}`. It answers `{"ok": true, "nodes": N, "queued": false}`. `GET /prompt_receiver/last?channel=main` returns the last text.
 
 ## Troubleshooting
 
