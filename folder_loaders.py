@@ -16,7 +16,7 @@ from PIL import Image, ImageOps
 import folder_paths
 
 SORT_MODES = ["natural name", "name", "modified date"]
-AT_END_MODES = ["stop", "wrap"]
+AT_END_MODES = ["stop and reset", "stop", "wrap"]
 
 
 def resolve_folder(folder):
@@ -60,9 +60,9 @@ def pick_file(folder, extensions, index, sort, at_end, kind):
     if total == 0:
         raise FileNotFoundError(f"No {kind} files in {path}")
     if index > total:
-        if at_end == "stop":
+        if at_end != "wrap":
             hint = " (the index control looks set to randomize; set it to increment)" if index > 1_000_000 else ""
-            raise IndexError(f"index {index} > {total} files, batch finished{hint}")
+            raise IndexError(f"index {index} > {total} files, batch finished. Click 'reset index to 1' on the node to start again{hint}")
         index = (index - 1) % total + 1
     return files[index - 1], index, total
 
@@ -134,12 +134,17 @@ def open_image(path):
     return image, mask, parameters
 
 
+def _ui(used, total, name):
+    """Sent to the node in the browser: shows 'used / total: name' and drives 'stop and reset'."""
+    return {"index": [used], "total": [total], "name": [name]}
+
+
 def _common_inputs():
     return {
         "folder": ("STRING", {"default": "", "tooltip": "Empty: ComfyUI's output folder. A name: a folder inside output. Or a full path. Subfolders are skipped."}),
         "index": ("INT", {"default": 1, "min": 1, "max": 0xFFFFFFFF, "control_after_generate": True, "tooltip": "Which file to load (1 = first). New nodes start on increment: set Run count to the number of files to go through the folder one file per run. Do not use randomize."}),
         "sort": (SORT_MODES, {"default": "natural name", "tooltip": "'natural name' puts 2.txt before 10.txt. 'modified date' is oldest first."}),
-        "at_end": (AT_END_MODES, {"default": "stop", "tooltip": "'stop': an index past the last file raises 'batch finished', so extra queued runs fail fast. 'wrap': start over at the first file."}),
+        "at_end": (AT_END_MODES, {"default": "stop and reset", "tooltip": "'stop and reset': after the last file runs, index goes back to 1 so the next batch starts clean. 'stop': index stays past the end and the next run raises 'batch finished' until you reset it. 'wrap': start over at the first file."}),
     }
 
 
@@ -162,7 +167,7 @@ class LoadTextByIndex:
         path, used, total = pick_file(folder, {"txt"}, index, sort, at_end, ".txt")
         name = os.path.basename(path)
         print(f"[LoadTextByIndex] {used}/{total}: {name}")
-        return (read_text(path), os.path.splitext(name)[0], used, total)
+        return {"ui": _ui(used, total, name), "result": (read_text(path), os.path.splitext(name)[0], used, total)}
 
 
 class LoadImageByIndex:
@@ -194,7 +199,7 @@ class LoadImageByIndex:
         image, mask, parameters = open_image(path)
         caption_path = os.path.join(os.path.dirname(path), stem + ".txt")
         caption = read_text(caption_path) if os.path.isfile(caption_path) else ""
-        return (image, mask, stem, caption, used, total, parameters)
+        return {"ui": _ui(used, total, name), "result": (image, mask, stem, caption, used, total, parameters)}
 
 
 class LoadImageWithParameters:
