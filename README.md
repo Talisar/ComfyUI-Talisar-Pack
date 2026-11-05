@@ -192,7 +192,19 @@ List loaders (e.g. *Load Texts from Folder Pixaroma*) send every file at once, a
 2. Set `index` to the first file (1). Its *control after generate* must be **increment** (new nodes start on it; nodes added before this change may still say *randomize*).
 3. Set ComfyUI's **Run** count to the number of files (the `total` output tells you) and queue.
 
+After each run the node shows what it loaded, e.g. `3 / 10: 003.txt`. With `at_end` on `stop and reset` (the default for new nodes), the index goes back to 1 after the last file, so the next batch starts clean.
+
+The index also goes back to 1 when you change `folder`, `sort` or `extensions`, and the **reset index to 1** button does it by hand (it doesn't queue anything). Loading a saved workflow keeps its saved index.
+
 To resume after a restart, set `index` to the next file number and queue the remaining runs.
+
+#### Keep a text loader and an image loader in step
+
+When a workflow uses both (one prompt per image), they must use the same index:
+
+1. Right-click each loader's `index` widget and convert it to an input (newer ComfyUI: just drag a link onto the widget).
+2. Add one **Primitive** node, connect its INT output to both `index` inputs, and set its *control after generate* to **increment**.
+3. Set and reset the index on the Primitive. The loaders' own reset button and auto-reset don't change a linked index.
 
 #### Inputs
 
@@ -201,7 +213,7 @@ To resume after a restart, set `index` to the next file number and queue the rem
 | `folder` | Empty: ComfyUI's output folder. A name: a folder inside output. Or a full path. Only files directly in the folder are used; subfolders (`_archive`, `_used`, ...) are skipped. |
 | `index` | Which file to load, starting at 1. |
 | `sort` | `natural name` (`2.txt` before `10.txt`), `name`, or `modified date` (oldest first). |
-| `at_end` | `stop`: an index past the last file errors with `index 151 > 150 files, batch finished`, so extra queued runs fail fast. `wrap`: starts over at the first file. |
+| `at_end` | `stop and reset` (default): after the last file runs, the index goes back to 1. `stop`: the index stays past the end, and the next run errors with `index 151 > 150 files, batch finished` until you reset it. Both make extra queued runs fail fast. `wrap`: starts over at the first file. |
 | `extensions` | Image node only. Default `png,jpg,jpeg,webp`. |
 
 #### Outputs
