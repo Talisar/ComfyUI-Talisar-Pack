@@ -68,6 +68,8 @@ The `parameters` output contains the exact text written to the image. Connect it
 | `foldername_prefix` | Folder inside the ComfyUI output directory to save into. Same syntax. |
 | `foldername_keys` | Comma-separated keys appended to the folder name. |
 | `delimiter` | Text placed between the prefix, keys and counter. The whole string is used (e.g. `_`, ` `, ` - `). |
+| `add_counter` | On (default): every filename gets a counter. Off: the plain name is used (e.g. `myImage.png`). If that name is already taken, see `if_name_exists`. |
+| `if_name_exists` | Only used when `add_counter` is off. `add counter` (default) keeps the existing file and saves the new one with a counter (`myImage_0001.png`); `overwrite` replaces it. Images after the first in a batch always get a counter so they never overwrite each other. |
 | `counter_digits` | Zero-padded counter width. Continues from the highest number already in the folder; does not fill gaps. |
 | `counter_position` | Counter at the `last` or `first` position of the filename. |
 | `one_counter_per_folder` | On: one counter for the whole folder. Off: a separate counter for each distinct filename. |
