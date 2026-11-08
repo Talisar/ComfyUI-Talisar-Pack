@@ -76,6 +76,8 @@ class SaveImageCivitai:
                 "foldername_prefix": ("STRING", {"default": "", "tooltip": "Folder (inside the output directory) to save into. Same key/date syntax."}),
                 "foldername_keys": ("STRING", {"default": "", "multiline": True, "tooltip": "Comma-separated keys appended to the folder name. Prefix a key with ./ to make it a subfolder."}),
                 "delimiter": ("STRING", {"default": "_", "tooltip": "Text placed between prefix, keys and counter."}),
+                "add_counter": ("BOOLEAN", {"default": True, "tooltip": "On: add a numbered counter to every filename. Off: save with the plain name; a counter is only added when that name is already taken (see if_name_exists)."}),
+                "if_name_exists": (["add counter", "overwrite"], {"default": "add counter", "tooltip": "Only used when add_counter is off. 'add counter' keeps the old file and numbers the new one; 'overwrite' replaces the old file."}),
                 "counter_digits": ("INT", {"default": 4, "min": 1, "max": 9, "tooltip": "Zero-padded counter width. Continues from the highest number in the folder; does not fill gaps."}),
                 "counter_position": (["last", "first"], {"default": "last"}),
                 "one_counter_per_folder": ("BOOLEAN", {"default": True, "tooltip": "On: one counter for the whole folder. Off: separate counter per filename."}),
@@ -140,7 +142,7 @@ class SaveImageCivitai:
 
     def save_images(self, images, filename_prefix="ComfyUI", filename_keys="", foldername_prefix="", foldername_keys="",
                     delimiter="_", counter_digits=4, counter_position="last", one_counter_per_folder=True,
-                    file_format="png", quality=95, embed_workflow=True,
+                    add_counter=True, if_name_exists="add counter", file_format="png", quality=95, embed_workflow=True,
                     lora_tags_in_prompt=True, hash_models=True, positive_override=None, negative_override=None,
                     extra_parameters="", source_parameters=None, prompt=None, extra_pnginfo=None, unique_id=None):
         if source_parameters and source_parameters.strip():
@@ -160,11 +162,22 @@ class SaveImageCivitai:
         subfolder = os.path.relpath(folder, self.output_dir)
         subfolder = "" if subfolder == "." else subfolder
 
+        def numbered(n):
+            num = f"{n:0{counter_digits}}"
+            return f"{stem}{delimiter}{num}{ext}" if counter_position == "last" else f"{num}{delimiter}{stem}{ext}"
+
         results = []
-        for image in images:
+        for i, image in enumerate(images):
             img = Image.fromarray(np.clip(255. * image.cpu().numpy(), 0, 255).astype(np.uint8))
-            num = f"{counter:0{counter_digits}}"
-            file = f"{stem}{delimiter}{num}{ext}" if counter_position == "last" else f"{num}{delimiter}{stem}{ext}"
+            if add_counter or not stem:
+                file = numbered(counter)
+            else:
+                file = f"{stem}{ext}"
+                # Never let images of the same batch overwrite each other; otherwise follow if_name_exists.
+                taken = os.path.exists(os.path.join(folder, file))
+                if i > 0 or (taken and if_name_exists != "overwrite"):
+                    file = numbered(naming.next_counter(folder, stem, ext, counter_digits, counter_position,
+                                                        delimiter, False))
             path = os.path.join(folder, file)
 
             if file_format == "png":
