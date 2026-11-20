@@ -10,6 +10,7 @@ A small collection of ComfyUI custom nodes:
 | [Load Text by Index](#load-text--image-by-index-one-per-run) | `text` | Loads one `.txt` prompt from a folder per run, so big prompt batches don't pile up in RAM. |
 | [Load Image by Index](#load-text--image-by-index-one-per-run) | `image` | Loads one image (plus its `.txt` caption) from a folder per run, for upscale / img2img passes. |
 | [Load Image (with Parameters)](#upscale-only-runs-keep-the-original-metadata) | `image` | Core Load Image (drag & drop) plus a `parameters` output with the image's A1111 generation data. |
+| [Split Image Parameters](#split-image-parameters) | `image` | Splits that `parameters` text into prompt, seed, steps, CFG, sampler, scheduler, size and model outputs to wire into KSampler and friends. |
 | [Image Filename (from loader)](#image-filename-from-loader) | `image` | Outputs the source filename of an image from any load-image node, e.g. for the save node's `filename_prefix`. |
 | [Prompt Receiver](#prompt-receiver) | `text` | Shows prompts sent from Local AI Prompt Generator's **Send to ComfyUI** button, ready to edit and queue. |
 
@@ -241,6 +242,34 @@ The saved image keeps the original text as-is (prompt, seed, sampler, model + Lo
 - `extra_parameters` is added before `Version`.
 
 `lora_tags_in_prompt` and `hash_models` don't apply in this mode (the tags and hashes come from the original). Filename keys such as `seed`, `steps`, `cfg` and `model` are read from the carried-over text. The `parameters` chunk is read from PNGs, and from EXIF UserComment in JPG/WebP (what this node and A1111 write). Images without it give an empty string, and the save node then traces the workflow as usual.
+
+## Split Image Parameters
+
+Reuse a previous image's settings without copy/paste. Put it after **Load Image (with Parameters)** (or Load Image by Index) and wire its outputs straight into your generation nodes:
+
+```
+Load Image (with Parameters) ──parameters──▶ Split Image Parameters ──seed / steps / cfg / sampler_name / scheduler──▶ KSampler
+                                                                     ──positive / negative──▶ CLIP Text Encode (text)
+                                                                     ──width / height──▶ Empty Latent Image
+                                                                     ──ckpt_name──▶ Load Checkpoint
+```
+
+Drag a wire from an output onto the matching widget of the other node (on older ComfyUI, right-click the node and convert the widget to an input first).
+
+| Output | What it is |
+| --- | --- |
+| `positive`, `negative` | The prompts. Multi-line prompts are kept. `negative` is empty if the image has none. |
+| `seed`, `steps`, `cfg`, `denoise` | As written in the image. `denoise` is 1.0 unless the image was img2img. |
+| `sampler_name`, `scheduler` | Converted to ComfyUI names (`DPM++ 2M SDE` → `dpmpp_2m_sde`, `Karras` → `karras`, `Automatic` → `normal`, old `DPM++ 2M Karras` → `dpmpp_2m` + `karras`), so they plug into KSampler's dropdowns. |
+| `width`, `height` | The first-pass size. For an upscale saved by this pack (`Hires upscale: 2`), the factor is taken off, so you get e.g. 832x1216, not 1664x2432. |
+| `guidance` | Flux `Distilled CFG Scale`, for a FluxGuidance node. |
+| `model_name` | The model name as written in the image, e.g. `juggernautXL_v9`. |
+| `ckpt_name` | The checkpoint file with that name (any subfolder), for Load Checkpoint. If none matches, the plain name is passed and the loader reports it as missing. |
+| `loras` | The `<lora:name:strength>` tags from the prompt, one per line. |
+
+`strip_lora_tags` (on by default) removes those tags from `positive`, since CLIP Text Encode doesn't load LoRAs from tags. Set your LoRA loader by hand from the `loras` output.
+
+Anything missing from the text gets a default (seed 0, steps 20, CFG 7, `euler`, `normal`, 1024x1024) and a `[Split Image Parameters]` warning in the console. Only A1111-style `parameters` text is read (what Save Image (Civitai Metadata) and A1111/Forge write); images from core Save Image only have the ComfyUI workflow, so drag those into ComfyUI instead.
 
 ## Image Filename (from loader)
 
