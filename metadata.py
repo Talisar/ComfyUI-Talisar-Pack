@@ -550,3 +550,154 @@ def rescale_parameters(text, width, height, extra=""):
 
     lines[i] = line
     return "\n".join(lines)
+
+
+# ---- splitting a parameters string back into generation settings -------------
+
+_STEPS_RE = re.compile(r"(^|,\s*)Steps:\s*\d")
+_LORA_TAG_RE = re.compile(r"\s*<(?:lora|lyco):[^>]*>")
+
+# A1111 names -> ComfyUI names. Built from the maps above; the first ComfyUI name wins
+# for A1111 names shared by several (e.g. "DPM++ SDE" -> dpmpp_sde, not dpmpp_sde_gpu).
+SAMPLER_FROM_A1111 = {}
+for _c, _a in SAMPLER_NAMES.items():
+    SAMPLER_FROM_A1111.setdefault(_a.lower(), _c)
+SCHEDULER_FROM_A1111 = {}
+for _c, _a in SCHEDULER_NAMES.items():
+    SCHEDULER_FROM_A1111.setdefault(_a.lower(), _c)
+SCHEDULER_FROM_A1111.update({"uniform": "sgm_uniform", "align your steps": "normal"})
+
+
+def _settings_line(lines):
+    """Index of the 'Steps: ..., Size: ...' line, or None."""
+    i = _fields_line(lines)
+    if i is not None:
+        return i
+    for j in range(len(lines) - 1, -1, -1):
+        if _STEPS_RE.search(lines[j]):
+            return j
+    return None
+
+
+def _field_value(value):
+    if value.startswith('"'):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value.strip('"')
+    return value.strip()
+
+
+def to_comfy_sampler(name, samplers=None):
+    """A1111 or ComfyUI sampler name -> (ComfyUI sampler, scheduler implied by the name or None).
+
+    Old A1111 images put the scheduler in the sampler name ("DPM++ 2M Karras").
+    """
+    if not name:
+        return None, None
+    name = str(name).strip()
+    if samplers and name in samplers:
+        return name, None
+    low = name.lower()
+    if low in SAMPLER_FROM_A1111:
+        return SAMPLER_FROM_A1111[low], None
+    for suffix, sched in ((" karras", "karras"), (" exponential", "exponential")):
+        if low.endswith(suffix) and low[: -len(suffix)] in SAMPLER_FROM_A1111:
+            return SAMPLER_FROM_A1111[low[: -len(suffix)]], sched
+    guess = low.replace("++", "pp").replace(" ", "_").replace("-", "_")
+    if guess == "euler_a":
+        guess = "euler_ancestral"
+    if not samplers or guess in samplers:
+        return guess, None
+    return None, None
+
+
+def to_comfy_scheduler(name, schedulers=None):
+    if not name:
+        return None
+    name = str(name).strip()
+    if schedulers and name in schedulers:
+        return name
+    low = name.lower()
+    if low in SCHEDULER_FROM_A1111:
+        return SCHEDULER_FROM_A1111[low]
+    guess = low.replace(" ", "_")
+    return guess if not schedulers or guess in schedulers else None
+
+
+def split_parameters(text, samplers=None, schedulers=None):
+    """Turn an A1111 'parameters' string back into ComfyUI settings.
+
+    Returns a dict with positive, negative, loras ([(name, strength)]), seed, steps, cfg,
+    sampler_name, scheduler, width, height, denoise, guidance, model, fields (all raw
+    fields). A key is None when the text doesn't have it.
+    """
+    out = {"positive": "", "negative": "", "loras": [], "seed": None, "steps": None, "cfg": None,
+           "sampler_name": None, "scheduler": None, "width": None, "height": None,
+           "denoise": None, "guidance": None, "model": None, "fields": {}}
+    lines = (text or "").strip("\n").split("\n")
+    if not any(line.strip() for line in lines):
+        return out
+
+    i = _settings_line(lines)
+    prompt_lines = lines if i is None else lines[:i]
+    fields = {}
+    if i is not None:
+        for key, value in _FIELD_RE.findall(lines[i]):
+            if key.strip() and value:
+                fields[key.strip()] = _field_value(value)
+    out["fields"] = fields
+
+    neg = next((j for j, line in enumerate(prompt_lines) if line.startswith("Negative prompt:")), None)
+    pos_lines = prompt_lines if neg is None else prompt_lines[:neg]
+    positive = "\n".join(pos_lines).strip()
+    if neg is not None:
+        neg_lines = [prompt_lines[neg][len("Negative prompt:"):]] + prompt_lines[neg + 1:]
+        out["negative"] = "\n".join(neg_lines).strip()
+
+    for tag in re.findall(r"<(?:lora|lyco):([^>]*)>", positive):
+        parts = tag.split(":")
+        strength = 1.0
+        if len(parts) > 1:
+            try:
+                strength = float(parts[1])
+            except ValueError:
+                pass
+        out["loras"].append((parts[0].strip(), strength))
+    out["positive"] = positive
+
+    def num(key, cast):
+        try:
+            return cast(float(fields[key])) if cast is int else cast(fields[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    out["seed"] = num("Seed", int)
+    out["steps"] = num("Steps", int)
+    out["cfg"] = num("CFG scale", float)
+    out["denoise"] = num("Denoising strength", float)
+    out["guidance"] = num("Distilled CFG Scale", float)
+    out["model"] = fields.get("Model") or None
+
+    sampler, implied = to_comfy_sampler(fields.get("Sampler"), samplers)
+    out["sampler_name"] = sampler
+    out["scheduler"] = to_comfy_scheduler(fields.get("Schedule type"), schedulers) or implied
+
+    size = re.match(r"\s*(\d+)\s*x\s*(\d+)", str(fields.get("Size", "")))
+    if size:
+        w, h = int(size.group(1)), int(size.group(2))
+        hires = num("Hires upscale", float)
+        # Our save node writes the saved (upscaled) size plus the factor; A1111 writes the
+        # first-pass size. Give the first-pass size either way.
+        if hires and hires > 1 and str(fields.get("Version", "")).startswith("ComfyUI"):
+            w, h = _round8(w / hires), _round8(h / hires)
+        out["width"], out["height"] = w, h
+    return out
+
+
+def _round8(v):
+    return max(8, int(round(v / 8.0)) * 8)
+
+
+def strip_lora_tags(text):
+    return _LORA_TAG_RE.sub("", text or "").strip()
